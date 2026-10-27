@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Donker thema: de WebView volgt dit, zodat de pagina's ook donker worden -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#2f6f4f</item>
+        <item name="android:colorPrimaryDark">#2f6f4f</item>
+        <item name="android:colorAccent">#6cc196</item>
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:navigationBarColor">#22201d</item>
+    </style>
+</resources>

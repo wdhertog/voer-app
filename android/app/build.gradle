@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Ondertekensleutel: uit omgevingsvariabelen (GitHub Actions) of uit keystore.properties (lokaal).
+// Zie keystore.properties.example. Zonder sleutel wordt de release-APK niet ondertekend.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def signingValue = { String name -> System.getenv(name) ?: keystoreProps.getProperty(name) }
+def hasSigningKey = signingValue('VOER_KEYSTORE_FILE') != null
+
+android {
+    namespace 'nl.voerapp'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'nl.voerapp'
+        minSdk 23
+        targetSdk 34
+        // GitHub Actions zet hier het buildnummer in, zodat elke build een update van de vorige is
+        versionCode Integer.parseInt(System.getenv('VOER_VERSION_CODE') ?: '1')
+        versionName System.getenv('VOER_VERSION_NAME') ?: '1.0'
+    }
+
+    signingConfigs {
+        if (hasSigningKey) {
+            voer {
+                storeFile rootProject.file(signingValue('VOER_KEYSTORE_FILE'))
+                storePassword signingValue('VOER_KEYSTORE_PASSWORD')
+                keyAlias signingValue('VOER_KEY_ALIAS')
+                keyPassword signingValue('VOER_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (hasSigningKey) {
+                signingConfig signingConfigs.voer
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        // De app wordt zelf geïnstalleerd, niet via de Play Store; Play-eisen aan targetSdk gelden niet
+        disable 'ExpiredTargetSdkVersion', 'OldTargetApi'
+    }
+}
