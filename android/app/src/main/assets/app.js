@@ -201,6 +201,14 @@
     const SEX = { teef: '♀ Teef', reu: '♂ Reu' };
     const VACCINES = ['Cocktail (DHP)', 'Leptospirose', 'Kennelhoest', 'Rabiës', 'Ziekte van Weil'];
 
+    // Standaardtermijn tot de volgende inenting: DHP elke 3 jaar, de rest jaarlijks
+    const vaccineYears = (name) => (/dhp/i.test(name) ? 3 : 1);
+    function nextVaccination(date, name) {
+        const x = parse(date);
+        x.setFullYear(x.getFullYear() + vaccineYears(name));
+        return fmt(x);
+    }
+
     const kg = (n) => (+n).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' kg';
     const SHORT_MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
     const shortDate = (s) => { const d = parse(s); return d.getDate() + ' ' + SHORT_MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
@@ -420,10 +428,9 @@
         view.append(el('p', { className: 'muted', textContent: 'De aangevinkte inentingen komen op deze datum in de lijst van de hond.' }));
 
         const dateInput = el('input', { type: 'date', value: a.date <= now ? a.date : now, max: now, required: true });
-        const nextYear = (date) => { const x = parse(date); x.setFullYear(x.getFullYear() + 1); return fmt(x); };
         const rows = a.items.map((i) => {
             const box = el('input', { type: 'checkbox', checked: true });
-            const next = el('input', { type: 'date', value: nextYear(dateInput.value) });
+            const next = el('input', { type: 'date', value: nextVaccination(dateInput.value, i.name) });
             return { item: i, box, next, node: el('div', { className: 'complete-row' }, [
                 el('label', { className: 'check-row' }, [box, el('span', {}, [
                     el('strong', { textContent: i.name }), el('small', { className: 'block muted', textContent: ((byId(dogs, i.dog_id) || {}).name || '?') }),
@@ -431,7 +438,7 @@
                 field('Volgende inenting', next),
             ]) };
         });
-        dateInput.addEventListener('change', () => rows.forEach((r) => { if (dateInput.value) r.next.value = nextYear(dateInput.value); }));
+        dateInput.addEventListener('change', () => rows.forEach((r) => { if (dateInput.value) r.next.value = nextVaccination(dateInput.value, r.item.name); }));
 
         view.append(el('form', {
             className: 'card form',
@@ -596,8 +603,10 @@
         const vNote = el('input', { type: 'text', placeholder: 'Bijv. dierenarts, batchnummer', maxLength: 200 });
         const plusYear = el('button', {
             type: 'button', className: 'btn small ghost', textContent: '+1 jaar',
-            onclick: () => { const x = parse(vDate.value || now); x.setFullYear(x.getFullYear() + 1); vNext.value = fmt(x); },
+            onclick: () => { vNext.value = nextVaccination(vDate.value || now, vName.value); },
         });
+        // De knop laat de standaardtermijn van de gekozen inenting zien
+        vName.addEventListener('input', () => { plusYear.textContent = '+' + vaccineYears(vName.value) + ' jaar'; });
         const reminders = api('getReminders');
         const isLatest = (v) => reminders.some((r) => +r.dog_id === +dog.id && r.name.toLowerCase() === v.name.toLowerCase() && r.next_date === v.next_date);
         const vacRows = d.vaccinations.map((v) => {
