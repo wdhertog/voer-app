@@ -13,7 +13,16 @@ De app vraagt ook geen internetpermissie aan.
 - **Honden**: per hond een foto, geslacht (teef/reu), geboortedatum en leeftijd, plus:
   - een **gewichtstabel** met het verschil ten opzichte van de vorige meting;
   - een **inentingstabel** met de datum van de volgende inenting.
+  - een **grafiekje** van het gewichtsverloop; tik erop om een meting te zien.
+
   Verloopt een inenting binnen 30 dagen, of is hij al verlopen, dan zie je dat op het vandaag-scherm.
+- **Afspraken bij de dierenarts**: plan een afspraak en vink aan welke inentingen gezet worden (ook voor
+  meerdere honden tegelijk). Rond je de afspraak af, dan komen die inentingen op de datum van de afspraak
+  in de lijst, met de volgende inenting standaard een jaar later.
+- **Meldingen**: verloopt een inenting binnen 30 dagen en is er nog geen afspraak voor gepland, dan krijg
+  je één melding voor alle inentingen samen. Is er nog steeds geen afspraak, dan komt de melding na 7
+  dagen terug. In de week voor het verlopen (en daarna) komt hij elke dag. De controle draait dagelijks
+  rond 9:00.
 - **Instellingen**: honden en voermomenten toevoegen, hernoemen, sorteren, pauzeren of verwijderen.
 - **Back-up**: maak een back-upbestand en zet het terug, bijvoorbeeld via Google Drive. De foto's,
   het gewicht en de inentingen gaan mee. Oudere back-ups zijn ook terug te zetten.
@@ -74,16 +83,9 @@ geen updates meer installeren zonder de app en de gegevens te verwijderen.
 ## Zelf bouwen
 
 Kopieer `keystore.properties.example` naar `keystore.properties` en vul het pad naar de keystore en
-de wachtwoorden in. Dat bestand staat in `.gitignore`.
-
-- **Android Studio:** open de map `android/` en kies *Build → Build App Bundle(s) / APK(s) → Build APK(s)*,
-  of voer `./gradlew assembleRelease` uit. De APK komt in `app/build/outputs/apk/release/`.
-- **Zonder Android Studio (Linux):**
-  ```
-  sudo apt install android-sdk-platform-23 aapt dalvik-exchange zipalign apksigner
-  ./build-apk.sh
-  ```
-  De APK komt in `build/voer-app.apk`.
+de wachtwoorden in. Dat bestand staat in `.gitignore`. Open daarna de map `android/` in Android Studio en
+kies *Build → Build App Bundle(s) / APK(s) → Build APK(s)*, of voer `./gradlew assembleRelease` uit.
+De APK komt in `app/build/outputs/apk/release/`.
 
 ## Opbouw
 
@@ -91,5 +93,6 @@ de wachtwoorden in. Dat bestand staat in `.gitignore`.
 |---|---|
 | `app/src/main/assets/` | De schermen (HTML, CSS en JavaScript), die in de app worden meegeleverd |
 | `app/src/main/java/nl/voerapp/MainActivity.java` | Toont de schermen en koppelt JavaScript aan de database en de bestandskiezer |
-| `app/src/main/java/nl/voerapp/Database.java` | SQLite-opslag, back-up maken en terugzetten |
-| `build-apk.sh` | Bouwscript zonder Gradle |
+| `app/src/main/java/nl/voerapp/Database.java` | SQLite-opslag, afspraken, back-up maken en terugzetten |
+| `app/src/main/java/nl/voerapp/Reminders.java` | Bepaalt wanneer er een melding over inentingen komt |
+| `app/src/main/java/nl/voerapp/ReminderReceiver.java` | Dagelijkse controle; opnieuw inplannen na een herstart of update |

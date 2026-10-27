@@ -1,11 +1,16 @@
 package nl.voerapp;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -29,6 +34,10 @@ public class MainActivity extends Activity {
     private static final int REQUEST_SAVE = 1;
     private static final int REQUEST_OPEN_BACKUP = 2;
     private static final int REQUEST_PICK_FILE = 3;
+    private static final int REQUEST_NOTIFICATIONS = 4;
+
+    /** Welk scherm de app opent, bijv. "dogs" vanuit een melding. */
+    static final String EXTRA_VIEW = "view";
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private WebView webView;
@@ -77,7 +86,20 @@ public class MainActivity extends Activity {
         });
         webView.addJavascriptInterface(new Bridge(), "VoerNative");
         setContentView(webView);
-        webView.loadUrl("file:///android_asset/index.html");
+        String view = getIntent().getStringExtra(EXTRA_VIEW);
+        webView.loadUrl("file:///android_asset/index.html" + (view != null ? "#" + view : ""));
+
+        Reminders.schedule(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String view = intent.getStringExtra(EXTRA_VIEW);
+        if (view != null) {
+            js("window.voerShow && voerShow(" + JSONObject.quote(view) + ")");
+        }
     }
 
     @Override
@@ -112,6 +134,68 @@ public class MainActivity extends Activity {
                 webView.evaluateJavascript(script, null);
             }
         });
+    }
+
+    /** Na een wijziging in inentingen of afspraken: melding weghalen als er niets meer te melden is. */
+    private void refreshReminders() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Reminders.check(MainActivity.this, false);
+            }
+        }).start();
+    }
+
+    // ---------- Toestemming voor meldingen ----------
+
+    private boolean notificationsAllowed() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return false;
+        }
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        return Build.VERSION.SDK_INT < 24 || manager.areNotificationsEnabled();
+    }
+
+    /** "on", "ask" (Android kan het nog vragen) of "off" (alleen nog via de instellingen aan te zetten). */
+    private String notificationStatus() {
+        if (notificationsAllowed()) {
+            return "on";
+        }
+        boolean asked = getPreferences(MODE_PRIVATE).getBoolean("asked_notifications", false);
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && (!asked || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))) {
+            return "ask";
+        }
+        return "off";
+    }
+
+    private void requestNotifications() {
+        if ("ask".equals(notificationStatus())) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("asked_notifications", true).apply();
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+            return;
+        }
+        Intent intent;
+        if (Build.VERSION.SDK_INT >= 26) {
+            intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+        } else {
+            intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+        }
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            toast("Zet meldingen aan via de instellingen van je telefoon");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQUEST_NOTIFICATIONS) {
+            js("window.voerReload && voerReload()");
+        }
     }
 
     private void toast(String message) {
@@ -186,6 +270,7 @@ public class MainActivity extends Activity {
                     in.close();
                 }
                 db.importBackup(new String(buffer.toByteArray(), UTF8));
+                refreshReminders();
                 js("window.voerReload && voerReload()");
                 toast("Back-up teruggezet");
             } catch (Exception e) {
@@ -321,6 +406,7 @@ public class MainActivity extends Activity {
         public String addVaccination(long dogId, String date, String name, String nextDate, String note) {
             try {
                 db.addVaccination(dogId, date, name, emptyToNull(nextDate), note);
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);
@@ -331,6 +417,7 @@ public class MainActivity extends Activity {
         public String deleteRecord(String type, long id) {
             try {
                 db.deleteRecord(type, id);
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);
@@ -344,6 +431,63 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return error(e);
             }
+        }
+
+        @JavascriptInterface
+        public String getAppointments() {
+            try {
+                return db.getAppointments().toString();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String addAppointment(String date, String time, String note, String itemsJson) {
+            try {
+                db.addAppointment(date, emptyToNull(time), note, itemsJson);
+                refreshReminders();
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String deleteAppointment(long id) {
+            try {
+                db.deleteAppointment(id);
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String completeAppointment(long id, String date, String itemsJson) {
+            try {
+                db.completeAppointment(id, date, itemsJson);
+                refreshReminders();
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String notificationStatus() {
+            return JSONObject.quote(MainActivity.this.notificationStatus());
+        }
+
+        @JavascriptInterface
+        public String requestNotifications() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.requestNotifications();
+                }
+            });
+            return ok();
         }
 
         private String emptyToNull(String value) {

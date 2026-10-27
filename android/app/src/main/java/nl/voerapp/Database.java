@@ -18,7 +18,7 @@ import java.util.Locale;
 class Database extends SQLiteOpenHelper {
 
     private static final String NAME = "voer.db";
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
 
     Database(Context context) {
         super(context, NAME, null, VERSION);
@@ -60,6 +60,15 @@ class Database extends SQLiteOpenHelper {
                     + " date TEXT NOT NULL, name TEXT NOT NULL, next_date TEXT, note TEXT NOT NULL DEFAULT '')");
             db.execSQL("CREATE INDEX idx_weights_dog ON weights (dog_id, date)");
             db.execSQL("CREATE INDEX idx_vaccinations_dog ON vaccinations (dog_id, date)");
+        }
+        if (oldVersion < 3) {
+            // Versie 3: afspraken bij de dierenarts met de inentingen die gezet worden
+            db.execSQL("CREATE TABLE appointments (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,"
+                    + " time TEXT, note TEXT NOT NULL DEFAULT '', done INTEGER NOT NULL DEFAULT 0)");
+            db.execSQL("CREATE TABLE appointment_items (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    + " appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,"
+                    + " dog_id INTEGER NOT NULL REFERENCES dogs(id) ON DELETE CASCADE, name TEXT NOT NULL)");
+            db.execSQL("CREATE INDEX idx_appointment_items ON appointment_items (appointment_id)");
         }
     }
 
@@ -234,14 +243,101 @@ class Database extends SQLiteOpenHelper {
         getWritableDatabase().delete(type, "id = ?", new String[]{String.valueOf(id)});
     }
 
-    /** Per hond en soort inenting de meest recente, als daar een volgende datum bij staat. */
+    /**
+     * Per hond en soort inenting de meest recente, als daar een volgende datum bij staat.
+     * appointment_date is gevuld als er een openstaande afspraak voor die inenting is.
+     */
     JSONArray getReminders() throws JSONException {
         return rows(getReadableDatabase(),
-                "SELECT v.dog_id, v.name, v.next_date FROM vaccinations v JOIN dogs d ON d.id = v.dog_id"
+                "SELECT v.dog_id, v.name, v.next_date, (SELECT a.date FROM appointments a"
+                        + " JOIN appointment_items i ON i.appointment_id = a.id WHERE a.done = 0"
+                        + " AND i.dog_id = v.dog_id AND i.name = v.name COLLATE NOCASE ORDER BY a.date LIMIT 1)"
+                        + " AS appointment_date FROM vaccinations v JOIN dogs d ON d.id = v.dog_id"
                         + " WHERE d.active = 1 AND v.next_date IS NOT NULL AND v.next_date <> ''"
                         + " AND NOT EXISTS (SELECT 1 FROM vaccinations n WHERE n.dog_id = v.dog_id"
                         + " AND n.name = v.name COLLATE NOCASE AND (n.date > v.date OR (n.date = v.date AND n.id > v.id)))"
                         + " ORDER BY v.next_date", null);
+    }
+
+    // ---------- Afspraken ----------
+
+    /** Openstaande afspraken, met per afspraak de inentingen die gezet worden. */
+    JSONArray getAppointments() throws JSONException {
+        SQLiteDatabase db = getReadableDatabase();
+        JSONArray appointments = rows(db, "SELECT id, date, time, note FROM appointments WHERE done = 0"
+                + " ORDER BY date, time", null);
+        for (int i = 0; i < appointments.length(); i++) {
+            JSONObject a = appointments.getJSONObject(i);
+            a.put("items", rows(db, "SELECT i.dog_id, i.name FROM appointment_items i JOIN dogs d ON d.id = i.dog_id"
+                    + " WHERE i.appointment_id = ? ORDER BY d.sort_order, i.id", new String[]{String.valueOf(a.getLong("id"))}));
+        }
+        return appointments;
+    }
+
+    /** items: JSON-lijst van {dog_id, name}. */
+    void addAppointment(String date, String time, String note, String itemsJson) throws JSONException {
+        JSONArray items = new JSONArray(itemsJson);
+        if (items.length() == 0) {
+            throw new IllegalArgumentException("Vink minstens één inenting aan");
+        }
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ContentValues a = new ContentValues();
+            a.put("date", date);
+            a.put("time", time);
+            a.put("note", note);
+            long id = db.insertOrThrow("appointments", null, a);
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.getJSONObject(i);
+                ContentValues v = new ContentValues();
+                v.put("appointment_id", id);
+                v.put("dog_id", item.getLong("dog_id"));
+                v.put("name", item.getString("name"));
+                db.insertOrThrow("appointment_items", null, v);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    void deleteAppointment(long id) {
+        getWritableDatabase().delete("appointments", "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /**
+     * Rondt een afspraak af: de inentingen komen op de opgegeven datum in de lijst.
+     * items: JSON-lijst van {dog_id, name, next_date}.
+     */
+    void completeAppointment(long id, String date, String itemsJson) throws JSONException {
+        if (date.compareTo(today()) > 0) {
+            throw new IllegalArgumentException("Een afspraak in de toekomst kun je nog niet afronden");
+        }
+        JSONArray items = new JSONArray(itemsJson);
+        SQLiteDatabase db = getWritableDatabase();
+        String note = "";
+        Cursor c = db.rawQuery("SELECT note FROM appointments WHERE id = ? AND done = 0", new String[]{String.valueOf(id)});
+        try {
+            if (!c.moveToFirst()) {
+                throw new IllegalArgumentException("Afspraak niet gevonden");
+            }
+            note = c.getString(0);
+        } finally {
+            c.close();
+        }
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.getJSONObject(i);
+                String next = item.optString("next_date", "");
+                addVaccination(item.getLong("dog_id"), date, item.getString("name"), next.isEmpty() ? null : next, note);
+            }
+            db.execSQL("UPDATE appointments SET done = 1, date = ? WHERE id = ?", new Object[]{date, id});
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     // ---------- Voeren ----------
@@ -343,8 +439,10 @@ class Database extends SQLiteOpenHelper {
         SQLiteDatabase db = getReadableDatabase();
         backup.put("weights", rows(db, "SELECT dog_id, date, weight, note FROM weights ORDER BY id", null));
         backup.put("vaccinations", rows(db, "SELECT dog_id, date, name, next_date, note FROM vaccinations ORDER BY id", null));
+        backup.put("appointments", rows(db, "SELECT id, date, time, note, done FROM appointments ORDER BY id", null));
+        backup.put("appointment_items", rows(db, "SELECT appointment_id, dog_id, name FROM appointment_items ORDER BY id", null));
         backup.put("app", "voer-app");
-        backup.put("version", 2);
+        backup.put("version", 3);
         backup.put("exported_at", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()));
         return backup.toString(1);
     }
@@ -361,6 +459,9 @@ class Database extends SQLiteOpenHelper {
         // Back-ups van versie 1 hebben nog geen gewicht en inentingen
         JSONArray weights = backup.optJSONArray("weights");
         JSONArray vaccinations = backup.optJSONArray("vaccinations");
+        // Afspraken bestaan pas sinds versie 3
+        JSONArray appointments = backup.optJSONArray("appointments");
+        JSONArray appointmentItems = backup.optJSONArray("appointment_items");
 
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
@@ -368,6 +469,8 @@ class Database extends SQLiteOpenHelper {
             db.delete("feedings", null, null);
             db.delete("weights", null, null);
             db.delete("vaccinations", null, null);
+            db.delete("appointment_items", null, null);
+            db.delete("appointments", null, null);
             db.delete("dogs", null, null);
             db.delete("meals", null, null);
             insertItems(db, "dogs", dogs);
@@ -399,6 +502,24 @@ class Database extends SQLiteOpenHelper {
                 v.put("next_date", vac.isNull("next_date") ? null : vac.optString("next_date"));
                 v.put("note", vac.optString("note", ""));
                 db.insertOrThrow("vaccinations", null, v);
+            }
+            for (int i = 0; appointments != null && i < appointments.length(); i++) {
+                JSONObject a = appointments.getJSONObject(i);
+                ContentValues v = new ContentValues();
+                v.put("id", a.getLong("id"));
+                v.put("date", a.getString("date"));
+                v.put("time", a.isNull("time") ? null : a.optString("time"));
+                v.put("note", a.optString("note", ""));
+                v.put("done", a.optInt("done", 0));
+                db.insertOrThrow("appointments", null, v);
+            }
+            for (int i = 0; appointmentItems != null && i < appointmentItems.length(); i++) {
+                JSONObject item = appointmentItems.getJSONObject(i);
+                ContentValues v = new ContentValues();
+                v.put("appointment_id", item.getLong("appointment_id"));
+                v.put("dog_id", item.getLong("dog_id"));
+                v.put("name", item.getString("name"));
+                db.insertOrThrow("appointment_items", null, v);
             }
             db.setTransactionSuccessful();
         } finally {
