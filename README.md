@@ -16,6 +16,8 @@ Gemaakt met PHP, MySQL en JavaScript, zodat je hem op je eigen website kunt host
   Je blijft standaard 180 dagen ingelogd op je telefoon.
 - Werkt prettig op de telefoon, ondersteunt donkere modus en ververst vanzelf als je de app weer opent.
 
+Liever een app op je telefoon die alles lokaal bijhoudt, zonder server? Zie [`android/`](android/README.md).
+
 ## Installatie
 
 1. **Database aanmaken**: maak in het controlepaneel van je hosting een MySQL-database en een gebruiker aan.

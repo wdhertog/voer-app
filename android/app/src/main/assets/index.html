@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <title>Voer-app</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar"><span class="brand">🐕 Voer-app</span></header>
+
+<main id="view"></main>
+
+<nav class="tabbar">
+    <button type="button" data-view="today"><span class="tab-icon">🍖</span>Vandaag</button>
+    <button type="button" data-view="report"><span class="tab-icon">📊</span>Rapport</button>
+    <button type="button" data-view="settings"><span class="tab-icon">⚙️</span>Instellingen</button>
+</nav>
+
+<div id="modal" class="modal" hidden>
+    <div class="modal-box card">
+        <p id="modal-text"></p>
+        <div class="modal-actions">
+            <button type="button" class="btn" id="modal-cancel">Annuleren</button>
+            <button type="button" class="btn primary" id="modal-ok">OK</button>
+        </div>
+    </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

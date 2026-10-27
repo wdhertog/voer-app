@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'nl.voerapp'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'nl.voerapp'
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        // Dezelfde sleutel als build-apk.sh, zodat elke build een update van de vorige is
+        voer {
+            storeFile rootProject.file('keystore/voer-app.jks')
+            storePassword 'voerapp'
+            keyAlias 'voer-app'
+            keyPassword 'voerapp'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.voer
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.voer
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
