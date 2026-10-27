@@ -755,13 +755,19 @@
         const data = api('getData', p.start, p.end);
         const index = {};
         data.feedings.forEach((f) => { index[f.feed_date + '|' + f.dog_id + '|' + f.meal_id] = f; });
-        // Actieve honden/voermomenten, plus inactieve die in deze periode wél registraties hebben
-        const used = (key, id) => data.feedings.some((f) => +f[key] === +id);
-        const dogs = data.dogs.filter((d) => d.active || used('dog_id', d.id));
-        const meals = data.meals.filter((m) => m.active || used('meal_id', m.id));
         const days = [];
         for (let d = p.start; d <= p.end; d = addDays(d, 1)) days.push(d);
-        return { p, today: data.today, index, dogs, meals, days, get: (d, dog, meal) => index[d + '|' + dog.id + '|' + meal.id] };
+        // Gepauzeerd op dag d: dan telt een niet-gevoerde beurt niet als gemist
+        const pausedOn = (key, id, d) => data.pauses.some((x) =>
+            +x[key] === +id && x.start_date <= d && (!x.end_date || d < x.end_date));
+        const paused = (d, dog, meal) => pausedOn('dog_id', dog.id, d) || pausedOn('meal_id', meal.id, d);
+        // Honden/voermomenten die in deze periode actief waren of gevoerd zijn
+        const used = (key, id) => data.feedings.some((f) => +f[key] === +id);
+        const relevant = (key, item) => item.active || used(key, item.id) ||
+            days.some((d) => d <= data.today && !pausedOn(key, item.id, d));
+        const dogs = data.dogs.filter((d) => relevant('dog_id', d));
+        const meals = data.meals.filter((m) => relevant('meal_id', m));
+        return { p, today: data.today, index, dogs, meals, days, paused, get: (d, dog, meal) => index[d + '|' + dog.id + '|' + meal.id] };
     }
 
     function renderReport() {
@@ -794,26 +800,35 @@
         }
 
         // Statistieken (alleen dagen tot en met vandaag tellen mee)
-        const counted = days.filter((d) => d <= r.today);
+        // Gepauzeerde beurten tellen alleen mee als er toch gevoerd is
+        const counts = (d, dog, meal) => !!r.get(d, dog, meal) || !r.paused(d, dog, meal);
+        let countedDays = 0;
         let completeDays = 0;
         const perDog = {};
-        dogs.forEach((dog) => { perDog[dog.id] = 0; });
-        counted.forEach((d) => {
+        const expectedPerDog = {};
+        dogs.forEach((dog) => { perDog[dog.id] = 0; expectedPerDog[dog.id] = 0; });
+        days.filter((d) => d <= r.today).forEach((d) => {
             let complete = true;
+            let any = false;
             dogs.forEach((dog) => meals.forEach((meal) => {
+                if (!counts(d, dog, meal)) return;
+                any = true;
+                expectedPerDog[dog.id]++;
                 if (r.get(d, dog, meal)) perDog[dog.id]++;
                 else complete = false;
             }));
+            if (!any) return; // alles gepauzeerd: dag telt niet mee
+            countedDays++;
             if (complete) completeDays++;
         });
-        const expected = counted.length * meals.length;
 
         view.append(el('section', { className: 'stats' }, [
             el('div', { className: 'stat card' }, [
-                el('span', { className: 'stat-value', textContent: completeDays + '/' + counted.length }),
+                el('span', { className: 'stat-value', textContent: completeDays + '/' + countedDays }),
                 el('span', { className: 'stat-label', textContent: 'dagen alles gevoerd' }),
             ]),
         ].concat(dogs.map((dog) => {
+            const expected = expectedPerDog[dog.id];
             const pct = expected ? Math.round(perDog[dog.id] / expected * 100) : 0;
             const bar = el('span', { className: 'bar' }, [el('span')]);
             bar.firstChild.style.width = pct + '%';
@@ -847,6 +862,7 @@
                 const f = r.get(d, dog, meal);
                 const cls = 'cell' + (i === 0 ? ' dog-col' : '');
                 if (f) cells.push(el('td', { className: cls + ' fed' }, ['✓', el('small', { textContent: f.fed_at.slice(11, 16) })]));
+                else if (d <= r.today && r.paused(d, dog, meal)) cells.push(el('td', { className: cls + ' paused', title: 'Gepauzeerd', textContent: '–' }));
                 else if (d < r.today) cells.push(el('td', { className: cls + ' missed', textContent: '✗' }));
                 else if (d === r.today) cells.push(el('td', { className: cls + ' open', textContent: '·' }));
                 else cells.push(el('td', { className: cls + ' future' }));
@@ -856,6 +872,9 @@
         view.append(el('div', { className: 'card table-wrap' }, [
             el('table', { className: 'grid' }, [el('thead', {}, head), el('tbody', {}, rows)]),
         ]));
+        if (days.some((d) => d <= r.today && dogs.some((dog) => meals.some((meal) => !r.get(d, dog, meal) && r.paused(d, dog, meal))))) {
+            view.append(el('p', { className: 'small', style: 'margin-top: -8px', textContent: '– = gepauzeerd, telt niet mee' }));
+        }
 
         view.append(el('div', { className: 'actions' }, [
             el('button', { className: 'btn', textContent: '⬇ Opslaan als CSV', onclick: () => exportCsv(r) }),
@@ -867,7 +886,7 @@
         const lines = [['Datum', 'Hond', 'Voermoment', 'Gevoerd', 'Tijd']];
         r.days.filter((d) => d <= r.today).forEach((d) => r.dogs.forEach((dog) => r.meals.forEach((meal) => {
             const f = r.get(d, dog, meal);
-            lines.push([d, dog.name, meal.name, f ? 'ja' : 'nee', f ? f.fed_at.slice(11, 16) : '']);
+            lines.push([d, dog.name, meal.name, f ? 'ja' : r.paused(d, dog, meal) ? 'gepauzeerd' : 'nee', f ? f.fed_at.slice(11, 16) : '']);
         })));
         // BOM zodat Excel de tekens goed toont
         const csv = '﻿' + lines.map((l) => l.map(q).join(';')).join('\r\n') + '\r\n';

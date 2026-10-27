@@ -201,6 +201,7 @@ input[type="text"] {
 .cell.fed { color: var(--accent); font-weight: 700; }
 .cell.missed { color: var(--danger); background: var(--warn-soft); }
 .cell.open { color: var(--muted); }
+.cell.paused { color: var(--muted); }
 
 .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 

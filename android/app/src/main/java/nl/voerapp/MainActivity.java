@@ -106,6 +106,13 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        // Namen, honden of voermomenten kunnen gewijzigd zijn
+        VoerWidget.updateAll(this);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         // Na middernacht of na een tijdje in de achtergrond opnieuw tonen
@@ -288,6 +295,7 @@ public class MainActivity extends Activity {
                     }
                     db.importBackup(new String(buffer.toByteArray(), UTF8));
                     Reminders.check(MainActivity.this, false);
+                    VoerWidget.updateAll(MainActivity.this);
                     js("window.voerReload && voerReload()");
                     toast("Back-up teruggezet");
                 } catch (Exception e) {
@@ -325,6 +333,7 @@ public class MainActivity extends Activity {
         public String setFed(long dogId, long mealId, String date, boolean fed) {
             try {
                 db.setFed(dogId, mealId, date, fed);
+                VoerWidget.updateAll(MainActivity.this);
                 return ok();
             } catch (Exception e) {
                 return error(e);
