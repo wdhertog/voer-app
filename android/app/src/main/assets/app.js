@@ -100,7 +100,7 @@
 
     function show(name) {
         state.view = name;
-        const tab = name === 'dog' ? 'dogs' : name;
+        const tab = ['dog', 'plan', 'complete'].includes(name) ? 'dogs' : name;
         document.querySelectorAll('.tabbar button').forEach((b) =>
             b.classList.toggle('active', b.dataset.view === tab)
         );
@@ -111,7 +111,10 @@
     function render() {
         guard(() => {
             view.replaceChildren();
-            ({ today: renderToday, dogs: renderDogs, dog: renderDog, report: renderReport, settings: renderSettings })[state.view]();
+            ({
+                today: renderToday, dogs: renderDogs, dog: renderDog, plan: renderPlan, complete: renderComplete,
+                report: renderReport, settings: renderSettings,
+            })[state.view]();
         });
     }
 
@@ -199,7 +202,8 @@
     const VACCINES = ['Cocktail (DHP)', 'Leptospirose', 'Kennelhoest', 'Rabiës', 'Ziekte van Weil'];
 
     const kg = (n) => (+n).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' kg';
-    const shortDate = (s) => { const d = parse(s); return d.getDate() + ' ' + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getFullYear(); };
+    const SHORT_MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+    const shortDate = (s) => { const d = parse(s); return d.getDate() + ' ' + SHORT_MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
     const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 
     function age(birth, now) {
@@ -233,18 +237,35 @@
         return 'over ' + diff + (diff === 1 ? ' dag' : ' dagen') + ' (' + shortDate(r.next_date) + ')';
     }
 
+    function appointmentWhen(a, now) {
+        const diff = daysBetween(now, a.date);
+        const day = diff === 0 ? 'vandaag' : diff === 1 ? 'morgen' : DAYS[parse(a.date).getDay()] + ' ' + shortDate(a.date);
+        return day + (a.time ? ' om ' + a.time : '');
+    }
+
+    // Inentingen die binnen 30 dagen verlopen zonder afspraak, en afspraken in de komende week
     function renderReminders(dogs) {
         const now = today();
-        const soon = addDays(now, 30);
-        const due = api('getReminders').filter((r) => r.next_date <= soon && byId(dogs, r.dog_id));
-        if (!due.length) return;
-        view.append(el('div', { className: 'card reminders' }, due.map((r) => {
-            const dog = byId(dogs, r.dog_id);
-            return el('button', {
-                type: 'button', className: 'reminder' + (r.next_date < now ? ' overdue' : ''),
-                onclick: () => openDog(dog.id),
-            }, ['💉 ', el('strong', { textContent: r.name }), ' van ' + dog.name + ': ' + reminderText(r, now)]);
-        })));
+        const due = api('getReminders').filter((r) =>
+            !r.appointment_date && r.next_date <= addDays(now, 30) && byId(dogs, r.dog_id));
+        const upcoming = api('getAppointments').filter((a) => a.date <= addDays(now, 7));
+        if (due.length) {
+            view.append(el('div', { className: 'card reminders' }, due.map((r) => {
+                const dog = byId(dogs, r.dog_id);
+                return el('button', {
+                    type: 'button', className: 'reminder' + (r.next_date < now ? ' overdue' : ''),
+                    onclick: () => openDog(dog.id),
+                }, ['💉 ', el('strong', { textContent: r.name }), ' van ' + dog.name + ': ' + reminderText(r, now)]);
+            }).concat([el('button', { type: 'button', className: 'btn small', textContent: '📅 Afspraak plannen', onclick: () => show('plan') })])));
+        }
+        if (upcoming.length) {
+            view.append(el('div', { className: 'card appointments-note' }, upcoming.map((a) =>
+                el('button', { type: 'button', className: 'reminder', onclick: () => show('dogs') }, [
+                    '📅 ', el('strong', { textContent: 'Dierenarts ' + appointmentWhen(a, now) }),
+                    ': ' + a.items.map((i) => i.name + ' (' + ((byId(dogs, i.dog_id) || {}).name || '?') + ')').join(', '),
+                ])
+            )));
+        }
     }
 
     function renderDogs() {
@@ -273,6 +294,163 @@
                 el('span', { className: 'chevron', textContent: '›' }),
             ]);
         })));
+        renderAppointments(data.dogs);
+    }
+
+    // ---------- Afspraken bij de dierenarts ----------
+
+    function renderAppointments(dogs) {
+        const now = today();
+        const list = api('getAppointments');
+        view.append(el('section', { className: 'card', style: 'margin-top: 16px' }, [
+            el('h2', { textContent: 'Afspraken dierenarts' }),
+            list.length ? null : el('p', { className: 'muted', textContent: 'Geen afspraken gepland.' }),
+            el('div', { className: 'appointment-list' }, list.map((a) => el('article', { className: 'appointment' }, [
+                el('strong', { className: 'appointment-when', textContent: '📅 ' + appointmentWhen(a, now).replace(/^./, (c) => c.toUpperCase()) }),
+                a.note ? el('span', { className: 'muted', textContent: a.note }) : null,
+                el('div', { className: 'chips' }, a.items.map((i) =>
+                    el('span', { className: 'chip', textContent: ((byId(dogs, i.dog_id) || {}).name || '?') + ': ' + i.name })
+                )),
+                el('div', { className: 'row-actions' }, [
+                    el('button', { className: 'btn small primary', textContent: '✓ Afronden', onclick: () => { state.appointmentId = a.id; show('complete'); } }),
+                    el('button', {
+                        className: 'btn small danger', textContent: 'Verwijderen',
+                        onclick: async () => {
+                            if (await confirmDialog('Afspraak van ' + shortDate(a.date) + ' verwijderen?', 'Verwijderen')) {
+                                guard(() => api('deleteAppointment', a.id));
+                                render();
+                            }
+                        },
+                    }),
+                ]),
+            ]))),
+            el('button', { className: 'btn', textContent: '+ Afspraak plannen', onclick: () => show('plan') }),
+        ]));
+    }
+
+    function askForNotifications() {
+        if (JSON.parse(window.VoerNative.notificationStatus()) === 'ask') api('requestNotifications');
+    }
+
+    function renderPlan() {
+        const now = today();
+        const data = api('getData', now, now);
+        const dogs = data.dogs.filter((d) => d.active);
+        const reminders = api('getReminders');
+        view.append(el('button', { className: 'link back', textContent: '‹ Honden', onclick: () => show('dogs') }));
+        view.append(el('h1', { textContent: 'Afspraak plannen', style: 'margin-bottom: 12px' }));
+
+        const dateInput = el('input', { type: 'date', value: addDays(now, 7), min: now, required: true });
+        const timeInput = el('input', { type: 'time' });
+        const noteInput = el('input', { type: 'text', placeholder: 'Bijv. naam dierenarts', maxLength: 200 });
+        const checks = [];
+
+        function checkbox(dog, name, checked, hint, hintClass) {
+            const box = el('input', { type: 'checkbox', checked: checked });
+            checks.push({ box, dog_id: dog.id, name });
+            return el('label', { className: 'check-row' }, [
+                box, el('span', {}, [el('strong', { textContent: name }), hint ? el('small', { className: 'block ' + (hintClass || 'muted'), textContent: hint }) : null]),
+            ]);
+        }
+
+        const groups = dogs.map((dog) => {
+            // Per soort inenting de laatste, met de datum waarop hij verloopt
+            const latest = {};
+            api('getDog', dog.id).vaccinations.forEach((v) => {
+                const key = v.name.toLowerCase();
+                if (!latest[key]) latest[key] = v;
+            });
+            const list = el('div', { className: 'check-list' }, Object.values(latest).map((v) => {
+                const r = reminders.find((x) => +x.dog_id === +dog.id && x.name.toLowerCase() === v.name.toLowerCase());
+                if (r && r.appointment_date) return checkbox(dog, v.name, false, 'Al gepland op ' + shortDate(r.appointment_date));
+                if (!v.next_date) return checkbox(dog, v.name, false, '');
+                const diff = daysBetween(now, v.next_date);
+                return checkbox(dog, v.name, diff <= 30,
+                    diff < 0 ? 'Verlopen sinds ' + shortDate(v.next_date) : 'Verloopt ' + shortDate(v.next_date),
+                    diff < 0 ? 'danger-text' : diff <= 30 ? 'warn-text' : 'muted');
+            }));
+            const other = el('input', { type: 'text', placeholder: 'Andere inenting', maxLength: 100 });
+            other.setAttribute('list', 'vaccine-names');
+            const addOther = () => {
+                const name = other.value.trim();
+                if (!name) return;
+                list.append(checkbox(dog, name, true, ''));
+                other.value = '';
+            };
+            other.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addOther(); } });
+            return el('div', { className: 'check-group' }, [
+                el('h3', { className: 'dog-title' }, [avatar(dog, 'small'), dog.name]),
+                list,
+                el('span', { className: 'with-button' }, [other, el('button', { type: 'button', className: 'btn small ghost', textContent: '+ Toevoegen', onclick: addOther })]),
+            ]);
+        });
+
+        view.append(el('form', {
+            className: 'card form',
+            onsubmit: (e) => {
+                e.preventDefault();
+                const items = checks.filter((c) => c.box.checked).map((c) => ({ dog_id: c.dog_id, name: c.name }));
+                if (!items.length) { toast('Vink minstens één inenting aan'); return; }
+                if (!dateInput.value) { toast('Kies een datum'); return; }
+                try {
+                    api('addAppointment', dateInput.value, timeInput.value, noteInput.value.trim(), JSON.stringify(items));
+                } catch (err) {
+                    toast(err.message);
+                    return;
+                }
+                toast('Afspraak gepland');
+                askForNotifications();
+                show('dogs');
+            },
+        }, [
+            el('div', { className: 'form inline' }, [field('Datum', dateInput), field('Tijd (optioneel)', timeInput), field('Notitie', noteInput, true)]),
+            el('h2', { textContent: 'Welke inentingen worden gezet?', style: 'margin: 8px 0 0' }),
+            el('datalist', { id: 'vaccine-names' }, VACCINES.map((n) => el('option', { value: n }))),
+            dogs.length ? null : el('p', { className: 'muted', textContent: 'Er zijn nog geen honden.' }),
+        ].concat(groups, [el('button', { type: 'submit', className: 'btn primary', textContent: 'Afspraak opslaan' })])));
+    }
+
+    function renderComplete() {
+        const now = today();
+        const a = api('getAppointments').find((x) => +x.id === +state.appointmentId);
+        if (!a) { show('dogs'); return; }
+        const dogs = api('getData', now, now).dogs;
+        view.append(el('button', { className: 'link back', textContent: '‹ Honden', onclick: () => show('dogs') }));
+        view.append(el('h1', { textContent: 'Afspraak afronden', style: 'margin-bottom: 4px' }));
+        view.append(el('p', { className: 'muted', textContent: 'De aangevinkte inentingen komen op deze datum in de lijst van de hond.' }));
+
+        const dateInput = el('input', { type: 'date', value: a.date <= now ? a.date : now, max: now, required: true });
+        const nextYear = (date) => { const x = parse(date); x.setFullYear(x.getFullYear() + 1); return fmt(x); };
+        const rows = a.items.map((i) => {
+            const box = el('input', { type: 'checkbox', checked: true });
+            const next = el('input', { type: 'date', value: nextYear(dateInput.value) });
+            return { item: i, box, next, node: el('div', { className: 'complete-row' }, [
+                el('label', { className: 'check-row' }, [box, el('span', {}, [
+                    el('strong', { textContent: i.name }), el('small', { className: 'block muted', textContent: ((byId(dogs, i.dog_id) || {}).name || '?') }),
+                ])]),
+                field('Volgende inenting', next),
+            ]) };
+        });
+        dateInput.addEventListener('change', () => rows.forEach((r) => { if (dateInput.value) r.next.value = nextYear(dateInput.value); }));
+
+        view.append(el('form', {
+            className: 'card form',
+            onsubmit: (e) => {
+                e.preventDefault();
+                const items = rows.filter((r) => r.box.checked).map((r) => ({ dog_id: r.item.dog_id, name: r.item.name, next_date: r.next.value }));
+                if (items.some((i) => i.next_date && i.next_date <= dateInput.value)) { toast('De volgende inenting moet na de datum van de afspraak liggen'); return; }
+                try {
+                    api('completeAppointment', a.id, dateInput.value, JSON.stringify(items));
+                } catch (err) {
+                    toast(err.message);
+                    return;
+                }
+                toast(items.length === 1 ? 'Inenting toegevoegd' : items.length + ' inentingen toegevoegd');
+                show('dogs');
+            },
+        }, [field('Datum van de afspraak', dateInput)].concat(rows.map((r) => r.node), [
+            el('button', { type: 'submit', className: 'btn primary', textContent: '✓ Afronden' }),
+        ])));
     }
 
     // Foto verkleinen en vierkant bijsnijden, zodat hij weinig ruimte inneemt
@@ -401,6 +579,7 @@
                 },
             }, [field('Datum', wDate), field('Gewicht (kg)', wValue), field('Notitie', wNote, true),
                 el('button', { type: 'submit', className: 'btn primary', textContent: '+ Toevoegen' })]),
+            d.weights.length >= 2 ? weightChart(d.weights) : null,
             d.weights.length
                 ? el('div', { className: 'table-wrap' }, [el('table', { className: 'list' }, [
                     el('thead', {}, [el('tr', {}, ['Datum', 'Gewicht', 'Verschil', 'Notitie', ''].map((t) => el('th', { textContent: t })))]),
@@ -423,14 +602,17 @@
         const isLatest = (v) => reminders.some((r) => +r.dog_id === +dog.id && r.name.toLowerCase() === v.name.toLowerCase() && r.next_date === v.next_date);
         const vacRows = d.vaccinations.map((v) => {
             let status = '';
-            if (v.next_date && isLatest(v)) {
+            const latest = v.next_date && isLatest(v);
+            const planned = latest && reminders.find((r) => +r.dog_id === +dog.id && r.name.toLowerCase() === v.name.toLowerCase()).appointment_date;
+            if (latest && !planned) {
                 const diff = daysBetween(now, v.next_date);
                 status = diff < 0 ? ' overdue' : diff <= 30 ? ' soon' : '';
             }
             return el('tr', {}, [
                 el('td', { textContent: shortDate(v.date) }),
                 el('td', {}, [el('strong', { textContent: v.name }), v.note ? el('small', { className: 'muted block', textContent: v.note }) : null]),
-                el('td', { className: 'next' + status, textContent: v.next_date ? shortDate(v.next_date) : '–' }),
+                el('td', { className: 'next' + status }, [v.next_date ? shortDate(v.next_date) : '–',
+                    planned ? el('small', { className: 'block muted', textContent: '📅 gepland ' + shortDate(planned) }) : null]),
                 el('td', {}, [el('button', { className: 'icon-btn', 'aria-label': 'Verwijderen', textContent: '🗑', onclick: remove('vaccinations', v.id, v.name + ' van ' + shortDate(v.date) + ' verwijderen?') })]),
             ]);
         });
@@ -445,6 +627,7 @@
                     if (!name) return;
                     if (vNext.value && vNext.value <= vDate.value) { toast('De volgende inenting moet na de inentingsdatum liggen'); return; }
                     guard(() => api('addVaccination', dog.id, vDate.value, name, vNext.value, vNote.value.trim()));
+                    if (vNext.value) askForNotifications();
                     reload();
                 },
             }, [field('Datum', vDate), field('Inenting', vName),
@@ -458,6 +641,77 @@
                 ])])
                 : el('p', { className: 'muted', textContent: 'Nog geen inentingen.' }),
         ]));
+    }
+
+    // ---------- Grafiek van het gewicht ----------
+
+    function svg(tag, attrs, children) {
+        const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const key in attrs || {}) node.setAttribute(key, attrs[key]);
+        (children || []).forEach((c) => c != null && node.append(c));
+        return node;
+    }
+
+    function weightChart(weights) {
+        const points = weights.slice().sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+        const width = Math.max(240, view.clientWidth - 66);
+        const height = 150;
+        const pad = { top: 22, right: 12, bottom: 24, left: 40 };
+        const values = points.map((p) => p.weight);
+        const spread = Math.max(...values) - Math.min(...values);
+        const margin = Math.max(0.5, spread * 0.2);
+        const lo = Math.floor(Math.min(...values) - margin);
+        const hi = Math.ceil(Math.max(...values) + margin);
+        const first = points[0].date;
+        const span = Math.max(1, daysBetween(first, points[points.length - 1].date));
+        const x = (p) => pad.left + (daysBetween(first, p.date) / span) * (width - pad.left - pad.right);
+        const y = (v) => pad.top + (1 - (v - lo) / (hi - lo)) * (height - pad.top - pad.bottom);
+        const num = (v) => (+v).toLocaleString('nl-NL', { maximumFractionDigits: 1 });
+        const dayMonth = (s) => { const d = parse(s); return d.getDate() + ' ' + SHORT_MONTHS[d.getMonth()]; };
+
+        const ticks = [lo, (lo + hi) / 2, hi];
+        const last = points[points.length - 1];
+        const hair = svg('line', { class: 'hair', y1: pad.top - 6, y2: height - pad.bottom, visibility: 'hidden' });
+        const dots = points.map((p) => svg('circle', { class: 'dot', cx: x(p), cy: y(p.weight), r: 4 }));
+        const chart = svg('svg', {
+            class: 'chart', width: width, height: height, viewBox: '0 0 ' + width + ' ' + height, role: 'img',
+            'aria-label': 'Gewicht van ' + kg(points[0].weight) + ' op ' + shortDate(first) + ' naar ' + kg(last.weight) + ' op ' + shortDate(last.date),
+        }, ticks.map((t) => svg('g', {}, [
+            svg('line', { class: 'grid', x1: pad.left, x2: width - pad.right, y1: y(t), y2: y(t) }),
+            svg('text', { class: 'axis', x: pad.left - 6, y: y(t) + 4, 'text-anchor': 'end' }, [num(t)]),
+        ])).concat([
+            svg('text', { class: 'axis', x: pad.left, y: height - 6 }, [dayMonth(first)]),
+            svg('text', { class: 'axis', x: width - pad.right, y: height - 6, 'text-anchor': 'end' }, [dayMonth(last.date)]),
+            svg('path', { class: 'line', d: points.map((p, i) => (i ? 'L' : 'M') + x(p) + ',' + y(p.weight)).join(' ') }),
+            hair,
+        ], dots, [
+            // Onzichtbaar tikvlak over de hele grafiek
+            svg('rect', { class: 'hit', x: 0, y: 0, width: width, height: height }),
+            svg('text', { class: 'value', x: Math.min(x(last), width - pad.right), y: y(last.weight) - 10, 'text-anchor': 'end' }, [kg(last.weight)]),
+        ]));
+
+        // Tikken of bewegen: dichtstbijzijnde meting tonen
+        const tip = el('div', { className: 'chart-tip', hidden: true });
+        const wrap = el('div', { className: 'chart-wrap' }, [chart, tip]);
+        const pick = (e) => {
+            const box = chart.getBoundingClientRect();
+            const px = e.clientX - box.left;
+            let best = 0;
+            points.forEach((p, i) => { if (Math.abs(x(p) - px) < Math.abs(x(points[best]) - px)) best = i; });
+            const p = points[best];
+            hair.setAttribute('x1', x(p)); hair.setAttribute('x2', x(p)); hair.setAttribute('visibility', 'visible');
+            dots.forEach((d, i) => d.classList.toggle('active', i === best));
+            tip.textContent = shortDate(p.date) + ' · ' + kg(p.weight);
+            tip.hidden = false;
+            tip.style.left = Math.min(Math.max(x(p), 60), width - 60) + 'px';
+        };
+        chart.addEventListener('pointermove', pick);
+        chart.addEventListener('pointerdown', pick);
+        chart.addEventListener('pointerleave', (e) => {
+            if (e.pointerType !== 'mouse') return;
+            hair.setAttribute('visibility', 'hidden'); tip.hidden = true; dots.forEach((d) => d.classList.remove('active'));
+        });
+        return wrap;
     }
 
     // ---------- Rapport ----------
@@ -669,6 +923,18 @@
             ]));
         });
 
+        const status = JSON.parse(window.VoerNative.notificationStatus());
+        view.append(el('section', { className: 'card' }, [
+            el('h2', { textContent: 'Meldingen' }),
+            el('p', {
+                className: 'muted',
+                textContent: status === 'on'
+                    ? 'Meldingen staan aan. Verloopt een inenting binnen 30 dagen en is er nog geen afspraak, dan krijg je een melding: eerst elke week, en in de laatste week elke dag.'
+                    : 'Meldingen staan uit. Zet ze aan om een seintje te krijgen als een inenting bijna verloopt.',
+            }),
+            status === 'on' ? null : el('button', { className: 'btn primary', textContent: '🔔 Meldingen aanzetten', onclick: () => guard(() => api('requestNotifications')) }),
+        ]));
+
         view.append(el('section', { className: 'card' }, [
             el('h2', { textContent: 'Back-up' }),
             el('p', {
@@ -707,11 +973,14 @@
 
     window.voerBack = function () {
         if (!document.getElementById('modal').hidden) { closeModal(false); return true; }
-        if (state.view === 'dog') { show('dogs'); return true; }
+        if (['dog', 'plan', 'complete'].includes(state.view)) { show('dogs'); return true; }
         if (state.view !== 'today') { state.date = today(); show('today'); return true; }
         if (state.date !== today()) { state.date = today(); render(); return true; }
         return false;
     };
 
-    show('today');
+    window.voerShow = show;
+
+    // Vanuit een melding opent de app direct het juiste scherm (index.html#dogs)
+    show(location.hash === '#dogs' ? 'dogs' : 'today');
 })();
