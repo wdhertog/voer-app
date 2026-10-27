@@ -18,7 +18,7 @@ De app vraagt ook geen internetpermissie aan.
   Verloopt een inenting binnen 30 dagen, of is hij al verlopen, dan zie je dat op het vandaag-scherm.
 - **Afspraken bij de dierenarts**: plan een afspraak en vink aan welke inentingen gezet worden (ook voor
   meerdere honden tegelijk). Rond je de afspraak af, dan komen die inentingen op de datum van de afspraak
-  in de lijst, met de volgende inenting standaard een jaar later.
+  in de lijst. De volgende inenting staat standaard een jaar later, en drie jaar later voor DHP.
 - **Meldingen**: verloopt een inenting binnen 30 dagen en is er nog geen afspraak voor gepland, dan krijg
   je één melding voor alle inentingen samen. Is er nog steeds geen afspraak, dan komt de melding na 7
   dagen terug. In de week voor het verlopen (en daarna) komt hij elke dag. De controle draait dagelijks
