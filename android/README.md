@@ -1,6 +1,6 @@
 # 🐕 Voer-app voor Android
 
-De Android-versie van de Voer-app. Hij werkt **volledig offline**: alle gegevens staan in een
+De Voer-app voor Android. Hij werkt **volledig offline**: alle gegevens staan in een
 SQLite-database op de telefoon zelf. Er is geen server, account of internetverbinding nodig.
 De app vraagt ook geen internetpermissie aan.
 
@@ -10,8 +10,13 @@ De app vraagt ook geen internetpermissie aan.
   Nog een keer tikken maakt het ongedaan. Met de pijltjes ga je terug naar eerdere dagen.
 - **Rapport**: per week of per maand een overzicht met ✓ en ✗ per dag, het percentage per hond
   en het aantal dagen dat alles gevoerd is. Op te slaan als CSV, die je in Excel opent.
+- **Honden**: per hond een foto, geslacht (teef/reu), geboortedatum en leeftijd, plus:
+  - een **gewichtstabel** met het verschil ten opzichte van de vorige meting;
+  - een **inentingstabel** met de datum van de volgende inenting.
+  Verloopt een inenting binnen 30 dagen, of is hij al verlopen, dan zie je dat op het vandaag-scherm.
 - **Instellingen**: honden en voermomenten toevoegen, hernoemen, sorteren, pauzeren of verwijderen.
-- **Back-up**: maak een back-upbestand en zet het terug, bijvoorbeeld via Google Drive.
+- **Back-up**: maak een back-upbestand en zet het terug, bijvoorbeeld via Google Drive. De foto's,
+  het gewicht en de inentingen gaan mee. Oudere back-ups zijn ook terug te zetten.
   Daarnaast neemt de automatische Android-back-up de gegevens mee als die aanstaat.
 - Volgt de donkere modus van je telefoon.
 

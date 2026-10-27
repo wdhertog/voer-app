@@ -28,11 +28,13 @@ public class MainActivity extends Activity {
 
     private static final int REQUEST_SAVE = 1;
     private static final int REQUEST_OPEN_BACKUP = 2;
+    private static final int REQUEST_PICK_FILE = 3;
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private WebView webView;
     private Database db;
     private String pendingSaveContent;
+    private ValueCallback<Uri[]> pendingFileCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,9 +48,25 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
-        settings.setAllowContentAccess(false);
         settings.setSupportZoom(false);
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            // Nodig voor <input type="file"> (foto van de hond kiezen)
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (pendingFileCallback != null) {
+                    pendingFileCallback.onReceiveValue(null);
+                }
+                pendingFileCallback = callback;
+                try {
+                    startActivityForResult(params.createIntent(), REQUEST_PICK_FILE);
+                } catch (ActivityNotFoundException e) {
+                    pendingFileCallback = null;
+                    toast("Geen app gevonden om een foto te kiezen");
+                    return false;
+                }
+                return true;
+            }
+        });
         webView.setWebViewClient(new WebViewClient() {
             @Override
             @SuppressWarnings("deprecation")
@@ -123,6 +141,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_PICK_FILE) {
+            if (pendingFileCallback != null) {
+                pendingFileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                pendingFileCallback = null;
+            }
+            return;
+        }
         Uri uri = (resultCode == RESULT_OK && data != null) ? data.getData() : null;
 
         if (requestCode == REQUEST_SAVE) {
@@ -251,6 +276,78 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return error(e);
             }
+        }
+
+        @JavascriptInterface
+        public String getDog(long id) {
+            try {
+                return db.getDog(id).toString();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String updateDog(long id, String name, String sex, String birthDate) {
+            try {
+                db.updateDog(id, name, emptyToNull(sex), emptyToNull(birthDate));
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String setDogPhoto(long id, String photo) {
+            try {
+                db.setDogPhoto(id, emptyToNull(photo));
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String addWeight(long dogId, String date, double weight, String note) {
+            try {
+                db.addWeight(dogId, date, weight, note);
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String addVaccination(long dogId, String date, String name, String nextDate, String note) {
+            try {
+                db.addVaccination(dogId, date, name, emptyToNull(nextDate), note);
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String deleteRecord(String type, long id) {
+            try {
+                db.deleteRecord(type, id);
+                return ok();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String getReminders() {
+            try {
+                return db.getReminders().toString();
+            } catch (Exception e) {
+                return error(e);
+            }
+        }
+
+        private String emptyToNull(String value) {
+            return value == null || value.trim().isEmpty() ? null : value.trim();
         }
 
         @JavascriptInterface
