@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 # Bouwt de APK zonder Gradle/Android Studio, met de Android-tools uit Debian/Ubuntu:
 #   sudo apt install android-sdk-platform-23 aapt dalvik-exchange zipalign apksigner
+# Ondertekensleutel: dezelfde VOER_*-instellingen als Gradle, uit de omgeving of uit keystore.properties.
 # Resultaat: build/voer-app.apk
 set -euo pipefail
 cd "$(dirname "$0")"
 
+prop() {
+    local value="${!1:-}"
+    if [ -z "$value" ] && [ -f keystore.properties ]; then
+        value=$(sed -n "s/^$1=//p" keystore.properties)
+    fi
+    echo "$value"
+}
+KEYSTORE=$(prop VOER_KEYSTORE_FILE)
+if [ -z "$KEYSTORE" ]; then
+    echo "Geen ondertekensleutel: maak keystore.properties aan (zie keystore.properties.example)." >&2
+    exit 1
+fi
+
 ANDROID_JAR=${ANDROID_JAR:-/usr/lib/android-sdk/platforms/android-23/android.jar}
 OUT=build/apk
-VERSION_CODE=$(sed -n "s/.*versionCode \([0-9]*\).*/\1/p" app/build.gradle)
-VERSION_NAME=$(sed -n "s/.*versionName '\(.*\)'.*/\1/p" app/build.gradle)
+VERSION_CODE=${VOER_VERSION_CODE:-1}
+VERSION_NAME=${VOER_VERSION_NAME:-1.0}
 MIN_SDK=$(sed -n "s/.*minSdk \([0-9]*\).*/\1/p" app/build.gradle)
 TARGET_SDK=$(sed -n "s/.*targetSdk \([0-9]*\).*/\1/p" app/build.gradle)
 
@@ -30,7 +44,8 @@ dalvik-exchange --dex --min-sdk-version="$MIN_SDK" --output="$OUT/classes.dex" "
 (cd "$OUT" && zip -q unaligned.apk classes.dex)
 
 zipalign -f -p 4 "$OUT/unaligned.apk" "$OUT/aligned.apk"
-apksigner sign --ks keystore/voer-app.jks --ks-pass pass:voerapp --ks-key-alias voer-app \
+KS_PASS=$(prop VOER_KEYSTORE_PASSWORD) KEY_PASS=$(prop VOER_KEY_PASSWORD) \
+    apksigner sign --ks "$KEYSTORE" --ks-pass env:KS_PASS --key-pass env:KEY_PASS --ks-key-alias "$(prop VOER_KEY_ALIAS)" \
     --out build/voer-app.apk "$OUT/aligned.apk"
 apksigner verify build/voer-app.apk
 
