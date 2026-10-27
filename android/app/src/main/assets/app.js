@@ -100,8 +100,9 @@
 
     function show(name) {
         state.view = name;
+        const tab = name === 'dog' ? 'dogs' : name;
         document.querySelectorAll('.tabbar button').forEach((b) =>
-            b.classList.toggle('active', b.dataset.view === name)
+            b.classList.toggle('active', b.dataset.view === tab)
         );
         render();
         window.scrollTo(0, 0);
@@ -110,7 +111,7 @@
     function render() {
         guard(() => {
             view.replaceChildren();
-            ({ today: renderToday, report: renderReport, settings: renderSettings })[state.view]();
+            ({ today: renderToday, dogs: renderDogs, dog: renderDog, report: renderReport, settings: renderSettings })[state.view]();
         });
     }
 
@@ -153,6 +154,8 @@
             return;
         }
 
+        renderReminders(dogs);
+
         const total = dogs.length * meals.length;
         let done = 0;
         dogs.forEach((d) => meals.forEach((m) => { if (fedOf(d, m)) done++; }));
@@ -166,7 +169,7 @@
 
         view.append(el('div', { className: 'dogs' }, dogs.map((dog) =>
             el('article', { className: 'card dog' }, [
-                el('h2', { textContent: dog.name }),
+                el('h2', { className: 'dog-title' }, [avatar(dog, 'small'), dog.name]),
                 el('div', { className: 'meals' }, meals.map((meal) => {
                     const fed = fedOf(dog, meal);
                     return el('button', {
@@ -188,6 +191,273 @@
         if (!fed && !(await confirmDialog('Voerbeurt "' + meal.name + '" van ' + dog.name + ' ongedaan maken?', 'Ongedaan maken'))) return;
         guard(() => api('setFed', dog.id, meal.id, state.date, fed));
         render();
+    }
+
+    // ---------- Honden: overzicht, gegevens, gewicht en inentingen ----------
+
+    const SEX = { teef: '♀ Teef', reu: '♂ Reu' };
+    const VACCINES = ['Cocktail (DHP)', 'Leptospirose', 'Kennelhoest', 'Rabiës', 'Ziekte van Weil'];
+
+    const kg = (n) => (+n).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' kg';
+    const shortDate = (s) => { const d = parse(s); return d.getDate() + ' ' + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getFullYear(); };
+    const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
+
+    function age(birth, now) {
+        const b = parse(birth);
+        const n = parse(now);
+        let months = (n.getFullYear() - b.getFullYear()) * 12 + n.getMonth() - b.getMonth();
+        if (n.getDate() < b.getDate()) months--;
+        if (months < 0) return '';
+        if (months === 0) { const w = Math.floor(daysBetween(birth, now) / 7); return w === 1 ? '1 week' : w + ' weken'; }
+        const y = Math.floor(months / 12);
+        const m = months % 12;
+        const mText = m === 1 ? '1 maand' : m + ' maanden';
+        if (y === 0) return mText;
+        return y + ' jaar' + (m ? ' en ' + mText : '');
+    }
+
+    function avatar(dog, size) {
+        if (dog.photo) return el('img', { className: 'avatar ' + size, src: dog.photo, alt: '' });
+        return el('span', { className: 'avatar placeholder ' + size, textContent: '🐕' });
+    }
+
+    function openDog(id) {
+        state.dogId = id;
+        show('dog');
+    }
+
+    function reminderText(r, now) {
+        const diff = daysBetween(now, r.next_date);
+        if (diff < 0) return 'verlopen sinds ' + shortDate(r.next_date);
+        if (diff === 0) return 'vandaag';
+        return 'over ' + diff + (diff === 1 ? ' dag' : ' dagen') + ' (' + shortDate(r.next_date) + ')';
+    }
+
+    function renderReminders(dogs) {
+        const now = today();
+        const soon = addDays(now, 30);
+        const due = api('getReminders').filter((r) => r.next_date <= soon && byId(dogs, r.dog_id));
+        if (!due.length) return;
+        view.append(el('div', { className: 'card reminders' }, due.map((r) => {
+            const dog = byId(dogs, r.dog_id);
+            return el('button', {
+                type: 'button', className: 'reminder' + (r.next_date < now ? ' overdue' : ''),
+                onclick: () => openDog(dog.id),
+            }, ['💉 ', el('strong', { textContent: r.name }), ' van ' + dog.name + ': ' + reminderText(r, now)]);
+        })));
+    }
+
+    function renderDogs() {
+        const data = api('getData', today(), today());
+        view.append(el('h1', { textContent: 'Honden', style: 'margin-bottom: 12px' }));
+        if (!data.dogs.length) {
+            view.append(el('div', { className: 'card empty' }, [
+                'Nog geen honden. ',
+                el('button', { className: 'link', textContent: 'Voeg ze toe bij Instellingen', onclick: () => show('settings') }),
+                '.',
+            ]));
+            return;
+        }
+        view.append(el('div', { className: 'dog-list' }, data.dogs.map((dog) => {
+            const d = api('getDog', dog.id);
+            const facts = [];
+            if (dog.sex) facts.push(SEX[dog.sex]);
+            if (dog.birth_date) facts.push(age(dog.birth_date, data.today));
+            if (d.weights.length) facts.push(kg(d.weights[0].weight));
+            return el('button', { type: 'button', className: 'card dog-card' + (dog.active ? '' : ' inactive'), onclick: () => openDog(dog.id) }, [
+                avatar(dog, 'medium'),
+                el('span', { className: 'dog-card-text' }, [
+                    el('strong', { textContent: dog.name + (dog.active ? '' : ' (gepauzeerd)') }),
+                    el('span', { className: 'muted', textContent: facts.join(' · ') || 'Tik om gegevens in te vullen' }),
+                ]),
+                el('span', { className: 'chevron', textContent: '›' }),
+            ]);
+        })));
+    }
+
+    // Foto verkleinen en vierkant bijsnijden, zodat hij weinig ruimte inneemt
+    async function photoToDataUrl(file) {
+        let source;
+        try {
+            source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        } catch (e) {
+            source = await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error('Deze foto kan niet worden geopend'));
+                img.src = URL.createObjectURL(file);
+            });
+        }
+        const size = 400;
+        const side = Math.min(source.width, source.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        canvas.getContext('2d').drawImage(source, (source.width - side) / 2, (source.height - side) / 2, side, side, 0, 0, size, size);
+        return canvas.toDataURL('image/jpeg', 0.85);
+    }
+
+    function field(label, input, wide) {
+        return el('label', { className: 'field' + (wide ? ' wide' : '') }, [el('span', { textContent: label }), input]);
+    }
+
+    function renderDog() {
+        const d = api('getDog', state.dogId);
+        const dog = d.dog;
+        const now = d.today;
+        const reload = () => render();
+
+        view.append(el('button', { className: 'link back', textContent: '‹ Alle honden', onclick: () => show('dogs') }));
+
+        // Foto
+        const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            try {
+                api('setDogPhoto', dog.id, await photoToDataUrl(file));
+                reload();
+            } catch (e) {
+                toast(e.message);
+            }
+        });
+        view.append(el('section', { className: 'dog-header' }, [
+            el('button', { type: 'button', className: 'photo-button', 'aria-label': 'Foto kiezen', onclick: () => fileInput.click() }, [
+                avatar(dog, 'large'),
+                el('span', { className: 'photo-edit', textContent: '📷' }),
+            ]),
+            fileInput,
+            el('h1', { textContent: dog.name }),
+            el('p', { className: 'muted', textContent: [dog.sex ? SEX[dog.sex] : '', dog.birth_date ? age(dog.birth_date, now) : ''].filter(Boolean).join(' · ') }),
+            dog.photo ? el('button', {
+                className: 'link small', textContent: 'Foto verwijderen',
+                onclick: async () => {
+                    if (await confirmDialog('Foto van ' + dog.name + ' verwijderen?', 'Verwijderen')) {
+                        guard(() => api('setDogPhoto', dog.id, ''));
+                        reload();
+                    }
+                },
+            }) : null,
+        ]));
+
+        // Gegevens
+        const nameInput = el('input', { type: 'text', value: dog.name, maxLength: 100, required: true });
+        const sexChoice = el('div', { className: 'segmented' }, [['teef', '♀ Teef'], ['reu', '♂ Reu'], ['', 'Onbekend']].map(([value, label]) =>
+            el('label', {}, [el('input', { type: 'radio', name: 'sex', value: value, checked: (dog.sex || '') === value }), el('span', { textContent: label })])
+        ));
+        const birthInput = el('input', { type: 'date', value: dog.birth_date || '', max: now });
+        view.append(el('form', {
+            className: 'card form',
+            onsubmit: (e) => {
+                e.preventDefault();
+                const name = nameInput.value.trim();
+                if (!name) return;
+                const sex = sexChoice.querySelector('input:checked');
+                guard(() => { api('updateDog', dog.id, name, sex ? sex.value : '', birthInput.value); toast('Gegevens opgeslagen'); });
+                reload();
+            },
+        }, [
+            el('h2', { textContent: 'Gegevens' }),
+            field('Naam', nameInput),
+            field('Geslacht', sexChoice),
+            field('Geboortedatum', birthInput),
+            el('button', { type: 'submit', className: 'btn primary', textContent: 'Opslaan' }),
+        ]));
+
+        const remove = (type, id, text) => async () => {
+            if (await confirmDialog(text, 'Verwijderen')) {
+                guard(() => api('deleteRecord', type, id));
+                reload();
+            }
+        };
+
+        // Gewicht
+        const wDate = el('input', { type: 'date', value: now, max: now, required: true });
+        const wValue = el('input', { type: 'text', inputMode: 'decimal', placeholder: 'bijv. 12,5', required: true });
+        const wNote = el('input', { type: 'text', placeholder: 'Notitie (optioneel)', maxLength: 200 });
+        const weightRows = d.weights.map((w, i) => {
+            const prev = d.weights[i + 1];
+            const diff = prev ? w.weight - prev.weight : null;
+            return el('tr', {}, [
+                el('td', { textContent: shortDate(w.date) }),
+                el('td', { className: 'num', textContent: kg(w.weight) }),
+                el('td', {
+                    className: 'num muted',
+                    textContent: diff === null || Math.abs(diff) < 0.005 ? (diff === null ? '' : '±0') : (diff > 0 ? '+' : '−') + kg(Math.abs(diff)).replace(' kg', ''),
+                }),
+                el('td', { className: 'note', textContent: w.note }),
+                el('td', {}, [el('button', { className: 'icon-btn', 'aria-label': 'Verwijderen', textContent: '🗑', onclick: remove('weights', w.id, 'Meting van ' + shortDate(w.date) + ' verwijderen?') })]),
+            ]);
+        });
+        view.append(el('section', { className: 'card' }, [
+            el('h2', { textContent: 'Gewicht' }),
+            el('form', {
+                className: 'form inline',
+                onsubmit: (e) => {
+                    e.preventDefault();
+                    const value = parseFloat(wValue.value.replace(',', '.'));
+                    if (!(value > 0)) { toast('Vul een geldig gewicht in'); return; }
+                    guard(() => api('addWeight', dog.id, wDate.value, value, wNote.value.trim()));
+                    reload();
+                },
+            }, [field('Datum', wDate), field('Gewicht (kg)', wValue), field('Notitie', wNote, true),
+                el('button', { type: 'submit', className: 'btn primary', textContent: '+ Toevoegen' })]),
+            d.weights.length
+                ? el('div', { className: 'table-wrap' }, [el('table', { className: 'list' }, [
+                    el('thead', {}, [el('tr', {}, ['Datum', 'Gewicht', 'Verschil', 'Notitie', ''].map((t) => el('th', { textContent: t })))]),
+                    el('tbody', {}, weightRows),
+                ])])
+                : el('p', { className: 'muted', textContent: 'Nog geen metingen.' }),
+        ]));
+
+        // Inentingen
+        const vDate = el('input', { type: 'date', value: now, max: now, required: true });
+        const vName = el('input', { type: 'text', placeholder: 'bijv. Cocktail', maxLength: 100, required: true });
+        vName.setAttribute('list', 'vaccine-names');
+        const vNext = el('input', { type: 'date' });
+        const vNote = el('input', { type: 'text', placeholder: 'Bijv. dierenarts, batchnummer', maxLength: 200 });
+        const plusYear = el('button', {
+            type: 'button', className: 'btn small ghost', textContent: '+1 jaar',
+            onclick: () => { const x = parse(vDate.value || now); x.setFullYear(x.getFullYear() + 1); vNext.value = fmt(x); },
+        });
+        const reminders = api('getReminders');
+        const isLatest = (v) => reminders.some((r) => +r.dog_id === +dog.id && r.name.toLowerCase() === v.name.toLowerCase() && r.next_date === v.next_date);
+        const vacRows = d.vaccinations.map((v) => {
+            let status = '';
+            if (v.next_date && isLatest(v)) {
+                const diff = daysBetween(now, v.next_date);
+                status = diff < 0 ? ' overdue' : diff <= 30 ? ' soon' : '';
+            }
+            return el('tr', {}, [
+                el('td', { textContent: shortDate(v.date) }),
+                el('td', {}, [el('strong', { textContent: v.name }), v.note ? el('small', { className: 'muted block', textContent: v.note }) : null]),
+                el('td', { className: 'next' + status, textContent: v.next_date ? shortDate(v.next_date) : '–' }),
+                el('td', {}, [el('button', { className: 'icon-btn', 'aria-label': 'Verwijderen', textContent: '🗑', onclick: remove('vaccinations', v.id, v.name + ' van ' + shortDate(v.date) + ' verwijderen?') })]),
+            ]);
+        });
+        view.append(el('section', { className: 'card' }, [
+            el('h2', { textContent: 'Inentingen' }),
+            el('datalist', { id: 'vaccine-names' }, VACCINES.map((n) => el('option', { value: n }))),
+            el('form', {
+                className: 'form inline',
+                onsubmit: (e) => {
+                    e.preventDefault();
+                    const name = vName.value.trim();
+                    if (!name) return;
+                    if (vNext.value && vNext.value <= vDate.value) { toast('De volgende inenting moet na de inentingsdatum liggen'); return; }
+                    guard(() => api('addVaccination', dog.id, vDate.value, name, vNext.value, vNote.value.trim()));
+                    reload();
+                },
+            }, [field('Datum', vDate), field('Inenting', vName),
+                field('Volgende inenting (optioneel)', el('span', { className: 'with-button' }, [vNext, plusYear]), true),
+                field('Notitie', vNote, true),
+                el('button', { type: 'submit', className: 'btn primary', textContent: '+ Toevoegen' })]),
+            d.vaccinations.length
+                ? el('div', { className: 'table-wrap' }, [el('table', { className: 'list' }, [
+                    el('thead', {}, [el('tr', {}, ['Datum', 'Inenting', 'Volgende', ''].map((t) => el('th', { textContent: t })))]),
+                    el('tbody', {}, vacRows),
+                ])])
+                : el('p', { className: 'muted', textContent: 'Nog geen inentingen.' }),
+        ]));
     }
 
     // ---------- Rapport ----------
@@ -368,6 +638,7 @@
                     el('div', { className: 'row-actions' }, [
                         el('button', { className: 'btn small ghost', textContent: '↑', 'aria-label': 'Omhoog', onclick: () => act('moveItem', row.id, -1) }),
                         el('button', { className: 'btn small ghost', textContent: '↓', 'aria-label': 'Omlaag', onclick: () => act('moveItem', row.id, 1) }),
+                        type === 'dogs' ? el('button', { className: 'btn small ghost', textContent: 'Gegevens', onclick: () => openDog(row.id) }) : null,
                         el('button', { className: 'btn small ghost', textContent: row.active ? 'Pauzeren' : 'Activeren', onclick: () => act('toggleActive', row.id) }),
                         el('button', {
                             className: 'btn small danger', textContent: 'Verwijderen',
@@ -436,6 +707,7 @@
 
     window.voerBack = function () {
         if (!document.getElementById('modal').hidden) { closeModal(false); return true; }
+        if (state.view === 'dog') { show('dogs'); return true; }
         if (state.view !== 'today') { state.date = today(); show('today'); return true; }
         if (state.date !== today()) { state.date = today(); render(); return true; }
         return false;
