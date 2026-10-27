@@ -39,6 +39,7 @@ public class MainActivity extends Activity {
     /** Welk scherm de app opent, bijv. "dogs" vanuit een melding. */
     static final String EXTRA_VIEW = "view";
     private static final Charset UTF8 = Charset.forName("UTF-8");
+    private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
     private WebView webView;
     private Database db;
@@ -48,7 +49,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        db = new Database(this);
+        db = Database.get(this);
 
         getWindow().setStatusBarColor(Color.parseColor("#2f6f4f"));
 
@@ -58,6 +59,8 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setSupportZoom(false);
+        // Alleen de ingebouwde pagina's (file:///android_asset blijft werken); geen andere bestanden
+        settings.setAllowFileAccess(false);
         webView.setWebChromeClient(new WebChromeClient() {
             // Nodig voor <input type="file"> (foto van de hond kiezen)
             @Override
@@ -123,7 +126,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        db.close();
+        // De database is gedeeld en blijft open; de WebView ruimen we wel op
+        webView.removeJavascriptInterface("VoerNative");
+        webView.destroy();
         super.onDestroy();
     }
 
@@ -246,7 +251,7 @@ public class MainActivity extends Activity {
                 return;
             }
             try {
-                OutputStream out = getContentResolver().openOutputStream(uri, "wt");
+                OutputStream out = getContentResolver().openOutputStream(uri, "w");
                 try {
                     out.write(content.getBytes(UTF8));
                 } finally {
@@ -257,26 +262,39 @@ public class MainActivity extends Activity {
                 toast("Opslaan mislukt: " + e.getMessage());
             }
         } else if (requestCode == REQUEST_OPEN_BACKUP && uri != null) {
-            try {
-                InputStream in = getContentResolver().openInputStream(uri);
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                try {
-                    byte[] chunk = new byte[8192];
-                    int n;
-                    while ((n = in.read(chunk)) != -1) {
-                        buffer.write(chunk, 0, n);
-                    }
-                } finally {
-                    in.close();
-                }
-                db.importBackup(new String(buffer.toByteArray(), UTF8));
-                refreshReminders();
-                js("window.voerReload && voerReload()");
-                toast("Back-up teruggezet");
-            } catch (Exception e) {
-                toast("Terugzetten mislukt: " + e.getMessage());
-            }
+            importBackup(uri);
         }
+    }
+
+    /** Leest en zet de back-up terug op de achtergrond, zodat de app niet vastloopt. */
+    private void importBackup(final Uri uri) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    InputStream in = getContentResolver().openInputStream(uri);
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    try {
+                        byte[] chunk = new byte[8192];
+                        int n;
+                        while ((n = in.read(chunk)) != -1) {
+                            if (buffer.size() + n > MAX_BACKUP_BYTES) {
+                                throw new IllegalArgumentException("dit bestand is te groot voor een back-up");
+                            }
+                            buffer.write(chunk, 0, n);
+                        }
+                    } finally {
+                        in.close();
+                    }
+                    db.importBackup(new String(buffer.toByteArray(), UTF8));
+                    Reminders.check(MainActivity.this, false);
+                    js("window.voerReload && voerReload()");
+                    toast("Back-up teruggezet");
+                } catch (Exception e) {
+                    toast("Terugzetten mislukt: " + e.getMessage());
+                }
+            }
+        }).start();
     }
 
     /** Methodes die de JavaScript-code aanroept. Antwoorden zijn JSON-tekst. */
@@ -337,6 +355,7 @@ public class MainActivity extends Activity {
         public String toggleActive(String type, long id) {
             try {
                 db.toggleActive(type, id);
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);
@@ -357,6 +376,7 @@ public class MainActivity extends Activity {
         public String deleteItem(String type, long id) {
             try {
                 db.deleteItem(type, id);
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);
@@ -376,6 +396,7 @@ public class MainActivity extends Activity {
         public String updateDog(long id, String name, String sex, String birthDate) {
             try {
                 db.updateDog(id, name, emptyToNull(sex), emptyToNull(birthDate));
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);
@@ -457,6 +478,7 @@ public class MainActivity extends Activity {
         public String deleteAppointment(long id) {
             try {
                 db.deleteAppointment(id);
+                refreshReminders();
                 return ok();
             } catch (Exception e) {
                 return error(e);

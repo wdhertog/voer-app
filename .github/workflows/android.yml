@@ -18,18 +18,24 @@ on:
         required: false
         default: ''
 
+# Standaard alleen lezen; alleen de release-job krijgt schrijfrechten
 permissions:
-  contents: write # nodig om een release (en de bijbehorende tag) aan te maken
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      version_name: ${{ steps.version.outputs.version_name }}
     defaults:
       run:
         working-directory: android
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
@@ -39,6 +45,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Versie bepalen
+        id: version
         env:
           VERSIE: ${{ inputs.versie }}
         run: |
@@ -52,11 +59,16 @@ jobs:
             echo "VOER_VERSION_NAME=$VERSIE" >> "$GITHUB_ENV"
             echo "RELEASE_TAG=v$VERSIE" >> "$GITHUB_ENV"
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if ! [[ "${GITHUB_REF_NAME#v}" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "::error::Ongeldige versietag '$GITHUB_REF_NAME' (gebruik bijv. v1.3)."
+              exit 1
+            fi
             echo "VOER_VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
             echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           else
             echo "VOER_VERSION_NAME=build.${{ github.run_number }}" >> "$GITHUB_ENV"
           fi
+          grep -E '^(VOER_VERSION_NAME|RELEASE_TAG)=' "$GITHUB_ENV" | sed 's/^VOER_VERSION_NAME/version_name/; s/^RELEASE_TAG/release_tag/' >> "$GITHUB_OUTPUT"
 
       - name: Ondertekensleutel klaarzetten
         env:
@@ -91,11 +103,22 @@ jobs:
           name: voer-app-${{ env.VOER_VERSION_NAME }}
           path: android/voer-app.apk
 
-      - name: Release maken
-        if: env.RELEASE_TAG != ''
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: build
+    if: needs.build.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          name: Voer-app ${{ env.VOER_VERSION_NAME }}
-          files: android/voer-app.apk
+          name: voer-app-${{ needs.build.outputs.version_name }}
+
+      - name: Release maken
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+          TITLE: Voer-app ${{ needs.build.outputs.version_name }}
+        run: |
+          gh release create "$TAG" voer-app.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$TITLE" --notes "Installeer voer-app.apk op je telefoon, over de vorige versie heen."
