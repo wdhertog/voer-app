@@ -47,10 +47,10 @@ GitHub Actions bouwt de app automatisch (`.github/workflows/android.yml`):
 
 - **Bij elke push** die iets in `android/` verandert, komt de APK onder *Actions* bij die run te staan,
   onder *Artifacts*. Je moet daarvoor ingelogd zijn, en GitHub levert hem als zip aan.
-- **Bij een versietag** (bijv. `v1.1`) maakt GitHub ook een release aan met de APK erbij.
-  Die download je het makkelijkst op je telefoon.
-  Een tag maak je op GitHub via *Releases → Draft a new release → Choose a tag*, of met
-  `git tag v1.1 && git push origin v1.1`.
+- **Een nieuwe versie uitbrengen:** ga naar *Actions → Android-app bouwen → Run workflow*, vul bij
+  *versie* het nummer in (bijv. `1.3`) en klik op *Run workflow*. GitHub bouwt de app en maakt een
+  release `v1.3` met de APK erbij, die je het makkelijkst op je telefoon downloadt.
+  Een tag `v1.3` pushen werkt ook.
 
 Het versienummer loopt automatisch op met elke build, zodat elke nieuwe APK als update installeert.
 
