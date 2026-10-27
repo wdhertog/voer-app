@@ -20,7 +20,20 @@ class Database extends SQLiteOpenHelper {
     private static final String NAME = "voer.db";
     private static final int VERSION = 3;
 
-    Database(Context context) {
+    private static Database instance;
+
+    /**
+     * Eén gedeelde database voor de hele app (scherm en meldingen). Zo kunnen twee verbindingen
+     * nooit tegelijk een upgrade doen, en hoeft hij niet gesloten te worden.
+     */
+    static synchronized Database get(Context context) {
+        if (instance == null) {
+            instance = new Database(context.getApplicationContext());
+        }
+        return instance;
+    }
+
+    private Database(Context context) {
         super(context, NAME, null, VERSION);
     }
 
@@ -210,7 +223,7 @@ class Database extends SQLiteOpenHelper {
 
     void setDogPhoto(long id, String photo) {
         ContentValues v = new ContentValues();
-        v.put("photo", photo);
+        v.put("photo", checkPhoto(photo));
         getWritableDatabase().update("dogs", v, "id = ?", new String[]{String.valueOf(id)});
     }
 
@@ -250,13 +263,13 @@ class Database extends SQLiteOpenHelper {
     JSONArray getReminders() throws JSONException {
         return rows(getReadableDatabase(),
                 "SELECT v.dog_id, v.name, v.next_date, (SELECT a.date FROM appointments a"
-                        + " JOIN appointment_items i ON i.appointment_id = a.id WHERE a.done = 0"
+                        + " JOIN appointment_items i ON i.appointment_id = a.id WHERE a.done = 0 AND a.date >= ?"
                         + " AND i.dog_id = v.dog_id AND i.name = v.name COLLATE NOCASE ORDER BY a.date LIMIT 1)"
                         + " AS appointment_date FROM vaccinations v JOIN dogs d ON d.id = v.dog_id"
                         + " WHERE d.active = 1 AND v.next_date IS NOT NULL AND v.next_date <> ''"
                         + " AND NOT EXISTS (SELECT 1 FROM vaccinations n WHERE n.dog_id = v.dog_id"
                         + " AND n.name = v.name COLLATE NOCASE AND (n.date > v.date OR (n.date = v.date AND n.id > v.id)))"
-                        + " ORDER BY v.next_date", null);
+                        + " ORDER BY v.next_date", new String[]{today()});
     }
 
     // ---------- Afspraken ----------
@@ -527,6 +540,14 @@ class Database extends SQLiteOpenHelper {
         }
     }
 
+    /** Een foto moet een ingebedde afbeelding zijn, nooit een verwijzing naar een bestand of URL. */
+    private static String checkPhoto(String photo) {
+        if (photo != null && !photo.startsWith("data:image/")) {
+            throw new IllegalArgumentException("Ongeldige foto");
+        }
+        return photo;
+    }
+
     private static void insertItems(SQLiteDatabase db, String table, JSONArray items) throws JSONException {
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.getJSONObject(i);
@@ -536,9 +557,10 @@ class Database extends SQLiteOpenHelper {
             v.put("active", item.optBoolean("active", true) ? 1 : 0);
             v.put("sort_order", item.optInt("sort_order", i + 1));
             if ("dogs".equals(table)) {
-                for (String key : new String[]{"sex", "birth_date", "photo"}) {
+                for (String key : new String[]{"sex", "birth_date"}) {
                     v.put(key, item.isNull(key) ? null : item.optString(key));
                 }
+                v.put("photo", item.isNull("photo") ? null : checkPhoto(item.optString("photo")));
             }
             db.insertOrThrow(table, null, v);
         }

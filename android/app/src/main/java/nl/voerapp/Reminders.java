@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.service.notification.StatusBarNotification;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -70,7 +71,7 @@ final class Reminders {
         boolean urgent = false;
         boolean overdue = false;
 
-        Database db = new Database(context);
+        Database db = Database.get(context);
         try {
             JSONArray reminders = db.getReminders();
             JSONArray dogs = db.getData(today, today).getJSONArray("dogs");
@@ -89,8 +90,6 @@ final class Reminders {
             }
         } catch (Exception e) {
             return;
-        } finally {
-            db.close();
         }
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -102,18 +101,35 @@ final class Reminders {
             return;
         }
 
+        if (!allowNotify) {
+            // Na een wijziging in de app: een zichtbare melding stil bijwerken, geen nieuwe sturen
+            if (isShowing(manager)) {
+                notify(context, manager, lines, overdue, true);
+            }
+            return;
+        }
         String last = prefs.getString(LAST_NOTIFIED, null);
-        if (!allowNotify || today.equals(last)) {
+        if (today.equals(last)) {
             return;
         }
         if (last != null && !urgent && daysBetween(last, today) < REPEAT_DAYS) {
             return;
         }
-        notify(context, manager, lines, overdue);
+        notify(context, manager, lines, overdue, false);
         prefs.edit().putString(LAST_NOTIFIED, today).apply();
     }
 
-    private static void notify(Context context, NotificationManager manager, List<String> lines, boolean overdue) {
+    private static boolean isShowing(NotificationManager manager) {
+        for (StatusBarNotification n : manager.getActiveNotifications()) {
+            if (n.getId() == NOTIFICATION_ID) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void notify(Context context, NotificationManager manager, List<String> lines, boolean overdue,
+            boolean silentUpdate) {
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Inentingen",
@@ -149,8 +165,13 @@ final class Reminders {
                 .setStyle(new Notification.BigTextStyle().bigText(text + "\n\nPlan een afspraak in de app."))
                 .setContentIntent(content)
                 .setAutoCancel(true)
-                .setCategory(Notification.CATEGORY_REMINDER);
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setOnlyAlertOnce(silentUpdate);
         try {
+            if (!silentUpdate) {
+                // Een melding van gisteren die nog openstaat: opnieuw laten afgaan
+                manager.cancel(NOTIFICATION_ID);
+            }
             manager.notify(NOTIFICATION_ID, builder.build());
         } catch (SecurityException e) {
             // Geen toestemming voor meldingen

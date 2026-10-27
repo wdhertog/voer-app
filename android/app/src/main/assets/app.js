@@ -248,7 +248,7 @@
     function appointmentWhen(a, now) {
         const diff = daysBetween(now, a.date);
         const day = diff === 0 ? 'vandaag' : diff === 1 ? 'morgen' : DAYS[parse(a.date).getDay()] + ' ' + shortDate(a.date);
-        return day + (a.time ? ' om ' + a.time : '');
+        return day + (a.time ? ' om ' + a.time : '') + (diff < 0 ? ' (nog afronden)' : '');
     }
 
     // Inentingen die binnen 30 dagen verlopen zonder afspraak, en afspraken in de komende week
