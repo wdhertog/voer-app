@@ -1,4 +1,0 @@
-# Configuratie en SQL-bestanden niet via de browser bereikbaar maken
-<FilesMatch "^(config\.php|config\.sample\.php|install\.sql|README\.md)$">
-    Require all denied
-</FilesMatch>
