@@ -18,7 +18,7 @@ import java.util.Locale;
 class Database extends SQLiteOpenHelper {
 
     private static final String NAME = "voer.db";
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
 
     private static Database instance;
 
@@ -83,6 +83,22 @@ class Database extends SQLiteOpenHelper {
                     + " dog_id INTEGER NOT NULL REFERENCES dogs(id) ON DELETE CASCADE, name TEXT NOT NULL)");
             db.execSQL("CREATE INDEX idx_appointment_items ON appointment_items (appointment_id)");
         }
+        if (oldVersion < 4) {
+            // Versie 4: wanneer een hond of voermoment gepauzeerd was (start t/m de dag voor end_date)
+            db.execSQL("CREATE TABLE pauses (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    + " dog_id INTEGER REFERENCES dogs(id) ON DELETE CASCADE,"
+                    + " meal_id INTEGER REFERENCES meals(id) ON DELETE CASCADE,"
+                    + " start_date TEXT NOT NULL, end_date TEXT)");
+            addMissingPauses(db);
+        }
+    }
+
+    /** Wat gepauzeerd is zonder pauzeperiode, krijgt er een vanaf de dag na de laatste voerbeurt. */
+    private static void addMissingPauses(SQLiteDatabase db) {
+        db.execSQL("INSERT INTO pauses (dog_id, start_date) SELECT d.id, COALESCE((SELECT date(MAX(f.feed_date), '+1 day')"
+                + " FROM feedings f WHERE f.dog_id = d.id), '0000-01-01') FROM dogs d WHERE d.active = 0");
+        db.execSQL("INSERT INTO pauses (meal_id, start_date) SELECT m.id, COALESCE((SELECT date(MAX(f.feed_date), '+1 day')"
+                + " FROM feedings f WHERE f.meal_id = m.id), '0000-01-01') FROM meals m WHERE m.active = 0");
     }
 
     static String today() {
@@ -120,6 +136,8 @@ class Database extends SQLiteOpenHelper {
             c.close();
         }
         result.put("feedings", feedings);
+        result.put("pauses", rows(db, "SELECT dog_id, meal_id, start_date, end_date FROM pauses"
+                + " WHERE start_date <= ? AND (end_date IS NULL OR end_date > ?)", new String[]{to, from}));
         result.put("today", today());
         return result;
     }
@@ -399,9 +417,40 @@ class Database extends SQLiteOpenHelper {
         getWritableDatabase().update(table(type), v, "id = ?", new String[]{String.valueOf(id)});
     }
 
+    /** Pauzeren of weer activeren; de pauzeperiode wordt bewaard voor het rapport. */
     void toggleActive(String type, long id) {
-        getWritableDatabase().execSQL("UPDATE " + table(type) + " SET active = 1 - active WHERE id = ?",
-                new Object[]{id});
+        String table = table(type);
+        String column = "dogs".equals(table) ? "dog_id" : "meal_id";
+        String today = today();
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            Cursor c = db.rawQuery("SELECT active FROM " + table + " WHERE id = ?", new String[]{String.valueOf(id)});
+            boolean active;
+            try {
+                if (!c.moveToFirst()) {
+                    return;
+                }
+                active = c.getInt(0) == 1;
+            } finally {
+                c.close();
+            }
+            db.execSQL("UPDATE " + table + " SET active = ? WHERE id = ?", new Object[]{active ? 0 : 1, id});
+            if (active) {
+                ContentValues v = new ContentValues();
+                v.put(column, id);
+                v.put("start_date", today);
+                db.insertOrThrow("pauses", null, v);
+            } else {
+                db.execSQL("UPDATE pauses SET end_date = ? WHERE " + column + " = ? AND end_date IS NULL",
+                        new Object[]{today, id});
+                // Vandaag gepauzeerd en weer geactiveerd: geen pauze
+                db.execSQL("DELETE FROM pauses WHERE " + column + " = ? AND start_date >= end_date", new Object[]{id});
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     void moveItem(String type, long id, int direction) {
@@ -455,7 +504,8 @@ class Database extends SQLiteOpenHelper {
         backup.put("appointments", rows(db, "SELECT id, date, time, note, done FROM appointments ORDER BY id", null));
         backup.put("appointment_items", rows(db, "SELECT appointment_id, dog_id, name FROM appointment_items ORDER BY id", null));
         backup.put("app", "voer-app");
-        backup.put("version", 3);
+        backup.put("pauses", rows(db, "SELECT dog_id, meal_id, start_date, end_date FROM pauses ORDER BY id", null));
+        backup.put("version", 4);
         backup.put("exported_at", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()));
         return backup.toString(1);
     }
@@ -475,6 +525,8 @@ class Database extends SQLiteOpenHelper {
         // Afspraken bestaan pas sinds versie 3
         JSONArray appointments = backup.optJSONArray("appointments");
         JSONArray appointmentItems = backup.optJSONArray("appointment_items");
+        // Pauzes bestaan pas sinds versie 4
+        JSONArray pauses = backup.optJSONArray("pauses");
 
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
@@ -483,6 +535,7 @@ class Database extends SQLiteOpenHelper {
             db.delete("weights", null, null);
             db.delete("vaccinations", null, null);
             db.delete("appointment_items", null, null);
+            db.delete("pauses", null, null);
             db.delete("appointments", null, null);
             db.delete("dogs", null, null);
             db.delete("meals", null, null);
@@ -533,6 +586,18 @@ class Database extends SQLiteOpenHelper {
                 v.put("dog_id", item.getLong("dog_id"));
                 v.put("name", item.getString("name"));
                 db.insertOrThrow("appointment_items", null, v);
+            }
+            for (int i = 0; pauses != null && i < pauses.length(); i++) {
+                JSONObject pause = pauses.getJSONObject(i);
+                ContentValues v = new ContentValues();
+                v.put("dog_id", pause.isNull("dog_id") ? null : pause.getLong("dog_id"));
+                v.put("meal_id", pause.isNull("meal_id") ? null : pause.getLong("meal_id"));
+                v.put("start_date", pause.getString("start_date"));
+                v.put("end_date", pause.isNull("end_date") ? null : pause.getString("end_date"));
+                db.insertOrThrow("pauses", null, v);
+            }
+            if (pauses == null) {
+                addMissingPauses(db);
             }
             db.setTransactionSuccessful();
         } finally {

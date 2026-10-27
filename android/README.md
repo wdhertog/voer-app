@@ -23,7 +23,10 @@ De app vraagt ook geen internetpermissie aan.
   je één melding voor alle inentingen samen. Is er nog steeds geen afspraak, dan komt de melding na 7
   dagen terug. In de week voor het verlopen (en daarna) komt hij elke dag. De controle draait dagelijks
   rond 9:00.
+- **Widget** voor het beginscherm: zie meteen hoeveel voerbeurten er vandaag nog open staan, met per hond
+  welke voermomenten al gedaan zijn. Houd je vinger op het beginscherm, kies *Widgets* en zoek *Voer-app*.
 - **Instellingen**: honden en voermomenten toevoegen, hernoemen, sorteren, pauzeren of verwijderen.
+  Gepauzeerde dagen tellen in het rapport niet mee als "niet gevoerd" (ze staan er als –).
 - **Back-up**: maak een back-upbestand en zet het terug, bijvoorbeeld via Google Drive. De foto's,
   het gewicht en de inentingen gaan mee. Oudere back-ups zijn ook terug te zetten.
   Daarnaast neemt de automatische Android-back-up de gegevens mee als die aanstaat.
@@ -95,4 +98,5 @@ De APK komt in `app/build/outputs/apk/release/`.
 | `app/src/main/java/nl/voerapp/MainActivity.java` | Toont de schermen en koppelt JavaScript aan de database en de bestandskiezer |
 | `app/src/main/java/nl/voerapp/Database.java` | SQLite-opslag, afspraken, back-up maken en terugzetten |
 | `app/src/main/java/nl/voerapp/Reminders.java` | Bepaalt wanneer er een melding over inentingen komt |
+| `app/src/main/java/nl/voerapp/VoerWidget.java` | De widget op het beginscherm |
 | `app/src/main/java/nl/voerapp/ReminderReceiver.java` | Dagelijkse controle; opnieuw inplannen na een herstart of update |

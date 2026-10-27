@@ -18,6 +18,7 @@ public class ReminderReceiver extends BroadcastReceiver {
                 public void run() {
                     try {
                         Reminders.check(context, true);
+                        VoerWidget.updateAll(context);
                     } finally {
                         result.finish();
                     }
