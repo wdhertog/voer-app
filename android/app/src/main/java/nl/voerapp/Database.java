@@ -327,18 +327,6 @@ class Database extends SQLiteOpenHelper {
                 v.put("name", item.getString("name"));
                 db.insertOrThrow("appointment_items", null, v);
             }
-            for (int i = 0; pauses != null && i < pauses.length(); i++) {
-                JSONObject pause = pauses.getJSONObject(i);
-                ContentValues v = new ContentValues();
-                v.put("dog_id", pause.isNull("dog_id") ? null : pause.getLong("dog_id"));
-                v.put("meal_id", pause.isNull("meal_id") ? null : pause.getLong("meal_id"));
-                v.put("start_date", pause.getString("start_date"));
-                v.put("end_date", pause.isNull("end_date") ? null : pause.getString("end_date"));
-                db.insertOrThrow("pauses", null, v);
-            }
-            if (pauses == null) {
-                addMissingPauses(db);
-            }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -598,6 +586,18 @@ class Database extends SQLiteOpenHelper {
                 v.put("dog_id", item.getLong("dog_id"));
                 v.put("name", item.getString("name"));
                 db.insertOrThrow("appointment_items", null, v);
+            }
+            for (int i = 0; pauses != null && i < pauses.length(); i++) {
+                JSONObject pause = pauses.getJSONObject(i);
+                ContentValues v = new ContentValues();
+                v.put("dog_id", pause.isNull("dog_id") ? null : pause.getLong("dog_id"));
+                v.put("meal_id", pause.isNull("meal_id") ? null : pause.getLong("meal_id"));
+                v.put("start_date", pause.getString("start_date"));
+                v.put("end_date", pause.isNull("end_date") ? null : pause.getString("end_date"));
+                db.insertOrThrow("pauses", null, v);
+            }
+            if (pauses == null) {
+                addMissingPauses(db);
             }
             db.setTransactionSuccessful();
         } finally {
